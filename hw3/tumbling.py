@@ -1,4 +1,4 @@
-from pyflink.common import SimpleStringSchema
+from pyflink.common import SimpleStringSchema, Time
 from pyflink.common.typeinfo import Types, RowTypeInfo
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream import StreamExecutionEnvironment, TimeCharacteristic
@@ -8,8 +8,7 @@ from pyflink.datastream.connectors.kafka import KafkaSource, \
 from pyflink.datastream.formats.json import JsonRowDeserializationSchema
 from pyflink.datastream.functions import MapFunction
 from pyflink.datastream.functions import ReduceFunction
-from pyflink.datastream.window import TumblingEventTimeWindows
-from pyflink.common.time import Duration
+from pyflink.datastream.window import TumblingProcessingTimeWindows
 
 
 def python_data_stream_example():
@@ -46,10 +45,10 @@ def python_data_stream_example():
     ds = env.from_source(source, WatermarkStrategy.no_watermarks(), "Kafka Source")
 
     # Apply Tumbling Window
-    ds.key_by(lambda value: value[0], key_type=Types.LONG()) \
-        .window(TumblingEventTimeWindows.of(Duration.seconds(10))) \
-        .reduce(MaxTemperatureFunction(), output_type=Types.TUPLE([Types.LONG(), Types.DOUBLE(), Types.LONG()])) \
-        .map(lambda value: str(value), output_type=Types.STRING()) \
+    ds.key_by(lambda value: value[0]) \
+        .window(TumblingProcessingTimeWindows.of(Time.seconds(5))) \
+        .reduce(MaxTemperatureFunction()) \
+        .map(TemperatureFunction(), Types.STRING()) \
         .sink_to(sink)
 
     env.execute_async("Tumbling Window Job")
@@ -61,9 +60,11 @@ class TemperatureFunction(MapFunction):
         device_id, temperature, execution_time = value
         return str({"device_id": device_id, "temperature": temperature - 273, "execution_time": execution_time})
 
+
 class MaxTemperatureFunction(ReduceFunction):
     def reduce(self, value1, value2):
-        return (value1[0], max(value1[1], value2[1]), value1[2])
+        return value1 if value1['temperature'] > value2['temperature'] else value2
+
 
 if __name__ == '__main__':
     python_data_stream_example()

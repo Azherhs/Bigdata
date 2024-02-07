@@ -1,14 +1,12 @@
-from pyflink.common import SimpleStringSchema, Time
+from pyflink.common import SimpleStringSchema
 from pyflink.common.typeinfo import Types, RowTypeInfo
 from pyflink.common.watermark_strategy import WatermarkStrategy
-from pyflink.datastream import StreamExecutionEnvironment, TimeCharacteristic
+from pyflink.datastream import StreamExecutionEnvironment, TimeCharacteristic, CheckpointingMode
 from pyflink.datastream.connectors import DeliveryGuarantee
 from pyflink.datastream.connectors.kafka import KafkaSource, \
     KafkaOffsetsInitializer, KafkaSink, KafkaRecordSerializationSchema
 from pyflink.datastream.formats.json import JsonRowDeserializationSchema
 from pyflink.datastream.functions import MapFunction
-from pyflink.datastream.functions import ReduceFunction
-from pyflink.datastream.window import ProcessingTimeSessionWindows
 
 
 def python_data_stream_example():
@@ -17,7 +15,15 @@ def python_data_stream_example():
     # are processed by the same worker and the collected result would be in order which is good for
     # assertion.
     env.set_parallelism(1)
+    env.enable_checkpointing(1000)
+    env.get_checkpoint_config().set_checkpointing_mode(CheckpointingMode.EXACTLY_ONCE)
+    env.get_checkpoint_config().set_min_pause_between_checkpoints(500)
+    env.get_checkpoint_config().set_checkpoint_interval(1000)
+    env.get_checkpoint_config().set_checkpoint_storage_dir("file:///opt/pyflink/tmp/checkpoints/logs")
+
+
     env.set_stream_time_characteristic(TimeCharacteristic.EventTime)
+
 
     type_info: RowTypeInfo = Types.ROW_NAMED(['device_id', 'temperature', 'execution_time'],
                                              [Types.LONG(), Types.DOUBLE(), Types.INT()])
@@ -43,15 +49,9 @@ def python_data_stream_example():
         .build()
 
     ds = env.from_source(source, WatermarkStrategy.no_watermarks(), "Kafka Source")
-
-    # Apply Session Window
-    ds.key_by(lambda value: value[0]) \
-        .window(ProcessingTimeSessionWindows.with_gap(Time.seconds(10))) \
-        .reduce(MaxTemperatureFunction()) \
-        .map(TemperatureFunction(), Types.STRING()) \
+    ds.map(TemperatureFunction(), Types.STRING()) \
         .sink_to(sink)
-
-    env.execute_async("Session Window Job")
+    env.execute_async("Devices preprocessing")
 
 
 class TemperatureFunction(MapFunction):
@@ -61,6 +61,5 @@ class TemperatureFunction(MapFunction):
         return str({"device_id": device_id, "temperature": temperature - 273, "execution_time": execution_time})
 
 
-class MaxTemperatureFunction(ReduceFunction):
-    def reduce(self, value1, value2):
-        return value1 if value1['temperature'] > value2['temperature'] else value2
+if __name__ == '__main__':
+    python_data_stream_example()
